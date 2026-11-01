@@ -1,3 +1,4 @@
+# Build-only experiment; iOS 14.8 runtime compatibility is unverified.
 name: Taurine arm64 build and inspect
 on:
   push:
