@@ -1,49 +1,68 @@
-name: C/C++ CI
-
+name: Taurine arm64 build and inspect
 on:
   push:
-    #tags:
-    #  - 'v*'
-
-    #branches: [ master ]
-
+    branches: [taurine-arm64]
+  workflow_dispatch:
+permissions:
+  contents: read
 jobs:
   build:
-    runs-on: macos-latest
-    strategy:
-      matrix:
-        provider: [TFP0, LIBKRW, LIBKERNRW]
-
+    runs-on: macos-14
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
-
       - name: Prepare Theos
-        uses: Randomblock1/theos-action@v1
-
-      - name: Build package
+        shell: bash
         run: |
-          rm -f packages/*
-          cp control.template control
-          if [[ ${{matrix.provider}} == TFP0 ]]; then
-            USE_TFP0=1 make package FINALPACKAGE=1
-          elif [[ ${{matrix.provider}} == LIBKRW ]]; then
-            sed -i '' 's/{{.depends}}/libkrw/g' control
-            USE_LIBKRW=1 make package FINALPACKAGE=1
-          elif [[ ${{matrix.provider}} == LIBKERNRW ]]; then
-            sed -i '' 's/{{.depends}}/libkernrw0/g' control
-            USE_LIBKERNRW=1 make package FINALPACKAGE=1
-          fi
-      - name: Publish artifact
-        uses: actions/upload-artifact@v2
+          set -euo pipefail
+          brew install ldid make dpkg
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+          git clone --recursive https://github.com/theos/theos.git "$RUNNER_TEMP/theos"
+          git clone --depth 1 https://github.com/theos/sdks.git "$RUNNER_TEMP/sdks"
+          cp -R "$RUNNER_TEMP/sdks/iPhoneOS14.5.sdk" "$RUNNER_TEMP/theos/sdks/"
+          echo "THEOS=$RUNNER_TEMP/theos" >> "$GITHUB_ENV"
+      - name: Configure single provider and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("Makefile")
+          s=p.read_text().replace("export USE_LIBKRW = 1", "# LIBKRW disabled for Taurine").replace("# export USE_LIBKERNRW = 1", "export USE_LIBKERNRW = 1")
+          p.write_text(s)
+          s=Path("control.template").read_text().replace("{{.depends}}","libkernrw0 (>= 1.0-1)").replace("Version: 0.0.4","Version: 0.0.4+taurine1")
+          Path("control").write_text(s)
+          Path("layout/DEBIAN/control").write_text(s)
+          PY
+          make package FINALPACKAGE=1 ARCHS=arm64 TOOL_NAME=fouldecrypt
+      - name: Inspect without executing
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p inspected/root
+          DEB=$(find packages -name '*.deb' -type f)
+          test "$(echo "$DEB" | wc -l | tr -d ' ')" = 1
+          dpkg-deb -f "$DEB" | tee inspected/control.txt
+          dpkg-deb -c "$DEB" | tee inspected/contents.txt
+          dpkg-deb -x "$DEB" inspected/root
+          BIN=inspected/root/usr/local/bin/fouldecrypt
+          file "$BIN" | tee inspected/file.txt
+          lipo -archs "$BIN" | tee inspected/archs.txt
+          test "$(lipo -archs "$BIN")" = arm64
+          otool -L "$BIN" | tee inspected/linkage.txt
+          grep -F '/usr/lib/libkernrw.0.dylib' inspected/linkage.txt
+          if grep -F 'libkrw.' inspected/linkage.txt; then exit 1; fi
+          dpkg-deb -f "$DEB" Depends | tee inspected/depends.txt
+          grep -F 'libkernrw0' inspected/depends.txt
+          if grep -E '(^|[, ])libkrw([ ,(]|$)' inspected/depends.txt; then exit 1; fi
+          shasum -a 256 "$DEB" "$BIN" | tee inspected/SHA256SUMS
+          git rev-parse HEAD > inspected/source-commit.txt
+          git submodule status --recursive > inspected/submodules.txt
+          git -C "$THEOS" rev-parse HEAD > inspected/theos-commit.txt
+          cp "$DEB" inspected/
+      - uses: actions/upload-artifact@v4
         with:
-          name: fouldecrypt-${{matrix.provider}}
-          path: ${{ github.workspace }}/packages/*.deb
-      - name: Release
-        uses: softprops/action-gh-release@v1
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          files: ${{ github.workspace }}/packages/*.deb
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: fouldecrypt-taurine-arm64
+          path: inspected/
+          if-no-files-found: error
