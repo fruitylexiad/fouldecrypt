@@ -34,7 +34,7 @@ jobs:
           Path("control").write_text(s)
           Path("layout/DEBIAN/control").write_text(s)
           PY
-          make package FINALPACKAGE=1 ARCHS=arm64 TOOL_NAME=fouldecrypt TARGET=iphone:clang:latest:14.0
+          make package FINALPACKAGE=1 ARCHS=arm64 TOOL_NAME=fouldecrypt TARGET=iphone:clang:latest:14.0 MODULESFLAGS=
       - name: Inspect without executing
         shell: bash
         run: |
