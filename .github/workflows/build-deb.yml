@@ -20,8 +20,6 @@ jobs:
           brew install ldid make dpkg
           echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
           git clone --recursive https://github.com/theos/theos.git "$RUNNER_TEMP/theos"
-          git clone --depth 1 https://github.com/theos/sdks.git "$RUNNER_TEMP/sdks"
-          cp -R "$RUNNER_TEMP/sdks/iPhoneOS14.5.sdk" "$RUNNER_TEMP/theos/sdks/"
           echo "THEOS=$RUNNER_TEMP/theos" >> "$GITHUB_ENV"
       - name: Configure single provider and build
         shell: bash
@@ -36,7 +34,7 @@ jobs:
           Path("control").write_text(s)
           Path("layout/DEBIAN/control").write_text(s)
           PY
-          make package FINALPACKAGE=1 ARCHS=arm64 TOOL_NAME=fouldecrypt
+          make package FINALPACKAGE=1 ARCHS=arm64 TOOL_NAME=fouldecrypt TARGET=iphone:clang:latest:14.0
       - name: Inspect without executing
         shell: bash
         run: |
@@ -51,6 +49,9 @@ jobs:
           file "$BIN" | tee inspected/file.txt
           lipo -archs "$BIN" | tee inspected/archs.txt
           test "$(lipo -archs "$BIN")" = arm64
+          otool -l "$BIN" > inspected/load-commands.txt
+          ldid -e "$BIN" > inspected/entitlements.plist
+          xcodebuild -version > inspected/toolchain.txt
           otool -L "$BIN" | tee inspected/linkage.txt
           grep -F '/usr/lib/libkernrw.0.dylib' inspected/linkage.txt
           if grep -F 'libkrw.' inspected/linkage.txt; then exit 1; fi
